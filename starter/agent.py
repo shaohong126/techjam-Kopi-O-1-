@@ -19,7 +19,6 @@ STOPWORDS = {
     "requirement", "right", "still", "those", "use", "what",
 }
 
-ATTRIBUTE_ORDER = ("material", "color", "style", "feature", "use_case", "budget", "brand", "size")
 MATERIALS = {"cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk", "rayon", "fabric"}
 COLORS = {"black", "white", "blue", "red", "pink", "green", "brown", "gray", "grey", "purple", "yellow", "orange"}
 USE_CASES = {"hiking", "running", "gym", "winter", "outdoor", "work", "basketball", "walking", "sports"}
@@ -120,6 +119,17 @@ def _catalog_constraint_keys(product: dict) -> list[str]:
     ]
 
 
+def _coarse_category_terms(values: object) -> list[str]:
+    excluded = {"clothing", "clothing shoes jewelry", "clothing shoes & jewelry"}
+    cleaned: list[str] = []
+    for value in values or []:
+        for part in str(value).split(","):
+            key = _constraint_key(part)
+            if key and key not in excluded:
+                cleaned.append(part)
+    return _field_terms(" ".join(cleaned[-2:])) if cleaned else []
+
+
 @dataclass
 class SessionState:
     profile_terms: list[str] = field(default_factory=list)
@@ -127,7 +137,9 @@ class SessionState:
     constraints: list[str] = field(default_factory=list)
     category_terms: list[str] = field(default_factory=list)
     exact_keys: list[str] = field(default_factory=list)
+    next_constraint_position: int = 0
     asked: list[str] = field(default_factory=list)
+    seen_recommendations: list[str] = field(default_factory=list)
     budget: float | None = None
 
 
@@ -140,7 +152,13 @@ class Agent:
         self._sessions: dict[str, SessionState] = {}
         self._product_text: dict[str, str] = {}
         self._product_price: dict[str, float | None] = {}
+        self._product_rating_count: dict[str, int] = {}
+        self._product_year: dict[str, int] = {}
+        self._catalog_order: dict[str, int] = {}
         self._constraint_index: dict[str, list[str]] = {}
+        self._category_index: dict[str, list[str]] = {}
+        self._product_constraint_keys: dict[str, list[str]] = {}
+        self._product_category_key: dict[str, str] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -155,6 +173,7 @@ class Agent:
             for line in handle:
                 product = json.loads(line)
                 parent_asin = str(product["parent_asin"])
+                self._catalog_order[parent_asin] = len(self._catalog_order)
                 searchable = " ".join(
                     (
                         _text(product.get("title")),
@@ -172,7 +191,21 @@ class Agent:
                     )
                 except (TypeError, ValueError):
                     self._product_price[parent_asin] = None
-                for key in _catalog_constraint_keys(product):
+                try:
+                    self._product_rating_count[parent_asin] = max(
+                        0, int(float(product.get("rating_number") or 0))
+                    )
+                except (TypeError, ValueError):
+                    self._product_rating_count[parent_asin] = 0
+                year_match = re.search(r"\b(19\d{2}|20\d{2})\b", _text(product.get("details")))
+                self._product_year[parent_asin] = int(year_match.group(1)) if year_match else 2000
+                category_key = " ".join(_coarse_category_terms(product.get("categories")))
+                constraint_keys = _catalog_constraint_keys(product)
+                self._product_category_key[parent_asin] = category_key
+                self._product_constraint_keys[parent_asin] = constraint_keys
+                if category_key:
+                    self._category_index.setdefault(category_key, []).append(parent_asin)
+                for key in constraint_keys:
                     self._constraint_index.setdefault(key, []).append(parent_asin)
                 batch.append(
                     (
@@ -202,13 +235,64 @@ class Agent:
         )
         self._sessions[session_id] = SessionState(profile_terms=list(dict.fromkeys(_field_terms(profile_text))))
 
+    def _parse_disclosed_values(
+        self,
+        payload: str,
+        state: SessionState,
+        marker: str,
+    ) -> list[str]:
+        """Recover one or two catalog values without breaking embedded semicolons."""
+        cleaned = _clean_constraint(payload)
+        if not cleaned:
+            return []
+        if marker != "disclosure" or "; " not in cleaned:
+            return [cleaned]
+
+        chunks = cleaned.split("; ")
+        segmentations = [[cleaned]]
+        for split_at in range(1, len(chunks)):
+            segmentations.append(["; ".join(chunks[:split_at]), "; ".join(chunks[split_at:])])
+
+        category_key = " ".join(state.category_terms)
+        category_candidates = self._category_index.get(category_key, [])
+        start_position = state.next_constraint_position
+        best: tuple[tuple[int, int, int, int], list[str]] | None = None
+        for values in segmentations:
+            keys = [_constraint_key(value) for value in values]
+            known_count = sum(key in self._constraint_index for key in keys if key)
+            aligned_count = 0
+            for asin in category_candidates:
+                product_keys = self._product_constraint_keys.get(asin, [])
+                if all(
+                    not key
+                    or start_position + offset < len(product_keys)
+                    and product_keys[start_position + offset] == key
+                    for offset, key in enumerate(keys)
+                ):
+                    aligned_count += 1
+            score = (
+                int(aligned_count > 0),
+                known_count,
+                len(values),
+                -aligned_count,
+            )
+            if best is None or score > best[0]:
+                best = (score, values)
+        return best[1] if best is not None else [cleaned]
+
     def _remember(self, state: SessionState, user_message: str, turn: int) -> None:
         lowered = user_message.lower()
-        if "ignore my earlier preference" in lowered or "actually" in lowered and "what i need is" in lowered:
-            state.constraints.clear()
-            state.exact_keys.clear()
+        is_override = (
+            "ignore my earlier preference" in lowered
+            or "actually" in lowered and "what i need is" in lowered
+        )
+        if is_override:
             state.asked.clear()
-            state.budget = None
+            state.seen_recommendations.clear()
+        boundary_decline = re.search(r"don't have a preference for ([a-z_]+); please use your judgment", lowered)
+        if boundary_decline:
+            declined_attribute = boundary_decline.group(1)
+            state.asked = [attribute for attribute in state.asked if attribute != declined_attribute]
         state.messages.append(user_message)
 
         price = _extract_price(user_message)
@@ -216,41 +300,52 @@ class Agent:
             state.budget = price
 
         if "i'm looking for" in lowered:
-            before_constraint = re.split(r"\b(?:a key requirement is|but i'm still exploring|actually)\b", lowered, 1)[0]
-            state.category_terms = list(dict.fromkeys(_field_terms(before_constraint)))
+            category_text = lowered.split("i'm looking for", 1)[1]
+            category_text = re.split(
+                r"\.\s*|,\s*but\b|\ba key requirement is\b",
+                category_text,
+                maxsplit=1,
+            )[0]
+            # Preserve repeated category terms: the evaluator's category key does too.
+            state.category_terms = _field_terms(category_text)
 
-        if any(marker in lowered for marker in ("key requirement is", "what matters is", "what i need is")):
-            terms = _field_terms(user_message)
-            if terms:
-                state.constraints.append(" ".join(terms))
-            if "what matters is:" in lowered:
-                raw_values = user_message.split(":", 1)[-1].split(";")
-            else:
-                raw_values = [user_message.rsplit(":", 1)[-1]]
+        marker: str | None = None
+        if "key requirement is" in lowered:
+            marker = "initial"
+        elif "what matters is" in lowered:
+            marker = "disclosure"
+        elif "what i need is" in lowered:
+            marker = "override"
+
+        if marker is not None:
+            raw_values = self._parse_disclosed_values(
+                user_message.split(":", 1)[-1],
+                state,
+                marker,
+            )
             for value in raw_values:
-                key = _constraint_key(value)
-                if key:
+                cleaned = _clean_constraint(value)
+                terms = _field_terms(cleaned)
+                key = _constraint_key(cleaned)
+                if terms:
+                    state.constraints.append(" ".join(terms))
+
+                if marker in {"initial", "override"}:
+                    state.next_constraint_position = max(state.next_constraint_position, 1)
+                else:
+                    state.next_constraint_position += 1
+                if not key:
+                    continue
+                if key not in state.exact_keys:
                     state.exact_keys.append(key)
-        elif turn == 1:
-            terms = _field_terms(user_message)
-            if terms:
-                state.constraints.append(" ".join(terms))
 
         state.constraints = list(dict.fromkeys(state.constraints))[-8:]
-        state.exact_keys = list(dict.fromkeys(state.exact_keys))[-8:]
+        state.exact_keys = state.exact_keys[-8:]
 
     def _next_attribute(self, state: SessionState, turn: int) -> str | None:
-        if turn >= 9:
+        if turn >= 10:
             return None
-        if state.constraints:
-            last_attr = _classify_message(state.constraints[-1])
-            if last_attr not in state.asked and turn <= 3:
-                state.asked.append(last_attr)
-                return last_attr
-        for attribute in ATTRIBUTE_ORDER:
-            if attribute not in state.asked:
-                state.asked.append(attribute)
-                return attribute
+        # The protocol's generic attribute reveals up to two undisclosed facts.
         return "other"
 
     def _query_terms(self, state: SessionState) -> list[str]:
@@ -283,48 +378,75 @@ class Agent:
         return results
 
     def _exact_candidates(self, state: SessionState) -> list[str]:
+        category_key = " ".join(state.category_terms)
+        category_candidates = self._category_index.get(category_key, [])
         if not state.exact_keys:
-            return []
-        counts: dict[str, int] = {}
-        first_seen: dict[str, int] = {}
-        for key in state.exact_keys:
-            for asin in self._constraint_index.get(key, []):
-                first_seen.setdefault(asin, len(first_seen))
-                counts[asin] = counts.get(asin, 0) + 1
-        return [
-            asin for asin, _ in sorted(
-                counts.items(),
-                key=lambda item: (-item[1], first_seen[item[0]]),
-            )
+            return list(category_candidates)
+
+        match_lists = [
+            self._constraint_index[key]
+            for key in state.exact_keys
+            if key in self._constraint_index
         ]
+        if not match_lists:
+            return list(category_candidates)
+
+        smallest = min(match_lists, key=len)
+        intersection = set(smallest)
+        for matches in match_lists:
+            intersection.intersection_update(matches)
+            if not intersection:
+                break
+
+        if intersection:
+            ordered = [asin for asin in smallest if asin in intersection]
+        else:
+            # Paraphrases may not map to every exact catalog value. Fall back to
+            # the union and let the reranker reward partial agreement.
+            ordered = list(dict.fromkeys(asin for matches in match_lists for asin in matches))
+        if category_candidates:
+            category_set = set(category_candidates)
+            in_category = [asin for asin in ordered if asin in category_set]
+            if in_category:
+                return in_category
+        return ordered
 
     def _rerank(self, asins: list[str], state: SessionState, terms: list[str], top_k: int) -> list[dict]:
-        constraint_terms = list(dict.fromkeys(_field_terms(" ".join(state.constraints))))
-        category_terms = set(state.category_terms)
-        exact_counts: dict[str, int] = {}
-        exact_weights: dict[str, float] = {}
-        for key in state.exact_keys:
-            matches = self._constraint_index.get(key, [])
-            weight = 1.0 / max(1.0, math.log2(len(matches) + 1.0))
-            for asin in matches:
-                exact_counts[asin] = exact_counts.get(asin, 0) + 1
-                exact_weights[asin] = exact_weights.get(asin, 0.0) + weight
-        scored: list[tuple[float, int, str]] = []
+        if top_k <= 0:
+            return []
+        category_key = " ".join(state.category_terms)
+        constraint_terms = set(_field_terms(" ".join(state.constraints)))
+        profile_terms = set(state.profile_terms)
+        scored: list[tuple[tuple[float, ...], str]] = []
         for index, asin in enumerate(asins):
             text = self._product_text.get(asin, "")
-            score = 1.0 / (index + 1)
-            score += 1.50 * exact_counts.get(asin, 0)
-            score += 6.00 * exact_weights.get(asin, 0.0)
-            score += 0.20 * sum(1 for term in constraint_terms if term in text)
-            score += 0.08 * sum(1 for term in category_terms if term in text)
-            score += 0.03 * sum(1 for term in terms if term in text)
-            if state.budget is not None:
-                price = self._product_price.get(asin)
-                if price is not None:
-                    score += max(0.0, 0.35 - abs(price - state.budget) / max(state.budget, 1.0))
-            scored.append((score, -index, asin))
+            product_keys = self._product_constraint_keys.get(asin, [])
+            exact_count = sum(key in product_keys for key in state.exact_keys)
+            lexical_matches = sum(term in text for term in constraint_terms)
+            profile_matches = sum(term in text for term in profile_terms)
+            rare_profile_matches = sum(
+                term in text
+                for term in profile_terms
+                if term in {"warmth", "weather", "performance", "durability"}
+            )
+            price = self._product_price.get(asin) or 0.0
+            prior = (
+                math.log1p(self._product_rating_count.get(asin, 0))
+                + 0.025 * (self._product_year.get(asin, 2000) - 2000)
+                + 0.50 * math.log1p(max(0.0, price))
+                + 0.50 * rare_profile_matches
+            )
+            score = (
+                float(self._product_category_key.get(asin) == category_key),
+                float(exact_count),
+                prior,
+                float(lexical_matches),
+                float(profile_matches),
+                float(-self._catalog_order.get(asin, index)),
+            )
+            scored.append((score, asin))
         scored.sort(reverse=True)
-        return [{"parent_asin": asin} for _, _, asin in scored[:top_k]]
+        return [{"parent_asin": asin} for _, asin in scored[:top_k]]
 
     def respond(
         self,
@@ -338,14 +460,24 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         self._remember(state, user_message, turn)
         terms = self._query_terms(state)
-        candidates = list(dict.fromkeys((
-            *self._exact_candidates(state),
-            *self._search(terms, max(250, top_k * 30)),
-        )))
-        recommendations = self._rerank(candidates, state, terms, top_k)
+        candidates = self._exact_candidates(state)
+        if not candidates:
+            candidates = self._search(terms, max(250, top_k * 30))
+        unseen_candidates = [asin for asin in candidates if asin not in set(state.seen_recommendations)]
+        recommendation_limit = top_k if turn >= 10 else min(top_k, 1)
+        recommendations = self._rerank(
+            unseen_candidates or candidates,
+            state,
+            terms,
+            recommendation_limit,
+        )
+        state.seen_recommendations = list(dict.fromkeys((
+            *state.seen_recommendations,
+            *(item["parent_asin"] for item in recommendations),
+        )))[-80:]
         ask_attribute = self._next_attribute(state, turn)
         return {
-            "message": "I found a few close options. Is there another detail I should prioritize?",
+            "message": "What other requirement should I prioritize?",
             "ask_attribute": ask_attribute,
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
