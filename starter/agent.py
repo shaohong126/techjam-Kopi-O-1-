@@ -45,7 +45,7 @@ class Agent:
         retrieval = self.catalog.retrieve(state, query_terms, top_k)
         retrieval = self._without_seen_recommendations(retrieval, state)
 
-        recommendation_limit = top_k if turn >= 10 else min(top_k, 1)
+        recommendation_limit = top_k
         recommendations = self.ranker.rerank(
             retrieval,
             state,

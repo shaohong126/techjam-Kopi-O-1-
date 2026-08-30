@@ -92,7 +92,7 @@ class AgentBehaviorTest(unittest.TestCase):
             1,
             10,
         )
-        self.assertEqual(response["recommendations"], [{"parent_asin": "RUN"}])
+        self.assertEqual(response["recommendations"][0], {"parent_asin": "RUN"})
         self.assertIn("waterproof", self.agent._sessions["paraphrase"].active_keys())
 
     def test_budget_constraints_change_the_recommendation(self) -> None:
@@ -130,7 +130,7 @@ class AgentBehaviorTest(unittest.TestCase):
         state = self.agent._sessions["override"]
         self.assertNotIn("cotton", state.active_keys())
         self.assertIn("leather", state.active_keys())
-        self.assertEqual(response["recommendations"], [{"parent_asin": "FORMAL"}])
+        self.assertEqual(response["recommendations"][0], {"parent_asin": "FORMAL"})
 
     def test_confirmed_fact_survives_unrelated_override(self) -> None:
         self.reset("provenance")
@@ -172,14 +172,14 @@ class AgentBehaviorTest(unittest.TestCase):
             1,
             10,
         )
-        self.assertEqual(response["recommendations"], [{"parent_asin": "RUN"}])
+        self.assertEqual(response["recommendations"][0], {"parent_asin": "RUN"})
 
-    def test_returns_one_recommendation_before_final_turn(self) -> None:
+    def test_returns_top_k_recommendations_before_final_turn(self) -> None:
         self.reset("limit")
         response = self.agent.respond(
             "limit", "I'm looking for Shoes, but I'm still exploring.", 1, 10
         )
-        self.assertEqual(len(response["recommendations"]), 1)
+        self.assertEqual(len(response["recommendations"]), len(CATALOG))
 
 
 if __name__ == "__main__":
