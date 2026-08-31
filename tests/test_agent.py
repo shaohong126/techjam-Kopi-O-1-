@@ -196,6 +196,10 @@ class AgentBehaviorTest(unittest.TestCase):
 
     def test_high_confidence_tail_controls_variable_k(self) -> None:
         agent = Agent(self.catalog_path)
+        # The submitted default (1.01) deliberately disables the tail. Lowering
+        # the public tuning parameter verifies that confidence-gated variable-k
+        # behavior remains available for a consumer-facing policy.
+        agent.tail_confidence_threshold = 0.95
         agent.reset("variable", {
             "preference_tags": ["comfort"],
             "summary": "Prior purchases emphasize comfort.",
