@@ -1,112 +1,268 @@
-# TechJam Conversational E-Commerce Search Challenge
+# Conversational E-Commerce Search Agent
 
-Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
+**Team Kopi-O · TechJam Conversational E-Commerce Search Challenge**
 
-## What You Receive
+An offline, stateful shopping agent that turns vague multi-turn conversations into ranked product recommendations. The agent asks targeted clarification questions, remembers and updates customer constraints, and tries to identify the hidden target product within 10 turns.
 
-- A frozen catalog of 50,000 products from the `Clothing_Shoes_and_Jewelry` category of Amazon Reviews 2023.
-- 200 labeled public sessions for local development.
-- A weak BM25 starter agent and deterministic local evaluator.
-- The Agent API contract and scoring rules.
+[Public repository](https://github.com/shaohong126/techjam-Kopi-O-1-) · [Data attribution](DATA_ATTRIBUTION.md) · [Agent contract](docs/agent_api_contract.json) · [Submission rules](docs/submission_rules.md)
 
-The organizer keeps 800 additional sessions private for final evaluation.
+## Project Overview
 
-## Task
+Conversational product search is harder than one-shot keyword search. A customer may begin with a broad request, reveal preferences gradually, reject an attribute, set a budget, or change their mind halfway through the conversation. A useful shopping agent must preserve the relevant context while still returning strong recommendations early.
 
-For each session, your agent receives an anonymized preference profile and a short customer message. Raw user IDs, review text, timestamps, and purchase history are never disclosed. On every turn the agent may:
+Our solution addresses this problem with a deterministic hybrid retrieval pipeline:
 
-- ask a natural clarification question in `message` and identify one requested field in `ask_attribute`;
-- return a ranked list of up to 10 catalog `parent_asin` values;
-- do both in the same response.
+- **Stateful conversation understanding** extracts categories, product constraints, budget ranges, intent, refusals, and preference overrides from every turn.
+- **Intent-aware routing** treats exploratory browsing differently from high-intent buying.
+- **Hybrid candidate retrieval** combines exact constraint matching, SQLite FTS5/BM25 search, lightweight synonym expansion, category routing, and budget filtering.
+- **Multi-signal reranking** uses constraint coverage, sequence alignment, lexical and semantic overlap, price proximity, profile affinity, product quality, popularity, and recency.
+- **Adaptive clarification** uses candidate attribute coverage and entropy to choose useful follow-up questions without repeatedly asking about declined preferences.
+- **Turn-efficient recommendations** avoid previously shown products and return a focused recommendation before the final turn.
 
-The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
+The final agent runs fully offline with no external API, model download, credential, or network access.
 
-## Download the Catalog
+## How It Works
 
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+```mermaid
+flowchart LR
+    A[Customer message<br/>+ aggregate profile] --> B[Conversation state tracker]
+    B --> C{Intent route}
+    C -->|Buying| D[Exact constraints<br/>BM25 + budget filter]
+    C -->|Browsing| E[Profile cold start<br/>semantic browse]
+    D --> F[Intent-aware reranker]
+    E --> F
+    F --> G[Ranked products]
+    F --> H[Information-gain<br/>dialogue policy]
+    G --> I[Agent API response]
+    H --> I
+    I -->|Next turn| B
+```
+
+### 1. Conversation state tracking
+
+Each session stores the customer's category, active constraints, budget, intent, asked attributes, declined attributes, and previously recommended products. When the customer changes their mind, conflicting tentative preferences are revoked while independently confirmed facts are preserved.
+
+### 2. Candidate retrieval
+
+The catalog is indexed in an in-memory SQLite FTS5 table over title, category, features, details, store, and description. Depending on the conversation state, retrieval combines:
+
+- exact constraint intersections;
+- field-weighted BM25 search;
+- hand-built synonym and semantic-term expansion;
+- category candidates and profile-based cold-start priors;
+- numerical budget filtering.
+
+### 3. Intent-aware reranking
+
+Buying sessions emphasize hard-constraint coverage, exact matches, budget proximity, and purchase priors. Browsing sessions place more weight on profile affinity, semantic similarity, product quality, popularity, and recency.
+
+### 4. Clarification policy
+
+The dialogue policy estimates the information gain of material, color, size, style, brand, budget, use case, and feature attributes from the current candidate pool. It asks a broad question early, then selects a specific high-value attribute when that is more informative.
+
+## Technology, APIs, and Data
+
+| Category | Used in this project |
+|---|---|
+| Language | Python 3.10+; verified with Python 3.12.5 |
+| Development tools | Python CLI, Git, and GitHub; the code is editor-agnostic |
+| External APIs | **None** |
+| Libraries/frameworks | Python standard library only: `sqlite3`/FTS5, `json`, `re`, `math`, `dataclasses`, `collections`, `pathlib`, and `unittest` |
+| LLMs / embedding models | None in the submitted agent |
+| Dataset | [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/), `Clothing_Shoes_and_Jewelry`, from McAuley Lab at UCSD |
+| Local evaluation data | 50,000 catalog products and 200 labeled development sessions |
+| Media assets | None; the solution uses only text and structured product metadata |
+
+The 200 public sessions comprise 80 Buying, 80 Browsing, 30 Intent Override, and 10 Boundary sessions. The organizer retains an additional 800 sessions for private evaluation. Raw user IDs, review text, timestamps, and purchase histories are not included in this repository. See [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) and [data/README.md](data/README.md) for provenance and permitted use.
+
+## Repository Structure
+
+```text
+.
+├── data/
+│   ├── public_set.jsonl          # 200 labeled development sessions
+│   └── catalog.jsonl             # Frozen catalog of 50,000 products
+├── docs/
+│   ├── agent_api_contract.json   # Machine-readable response contract
+│   ├── baseline_results.json     # Weak BM25 baseline
+│   ├── competition_specification.md
+│   ├── evaluation_config.json
+│   └── submission_rules.md
+├── evaluator/
+│   └── local_evaluator.py        # Deterministic simulator and scorer
+├── starter/
+│   ├── agent.py                  # Agent entry point and orchestration
+│   ├── dialogue.py               # Clarification-question policy
+│   ├── models.py                 # Session and retrieval data models
+│   ├── ranking.py                # Intent-aware reranking
+│   ├── retrieval.py              # FTS5 index and candidate retrieval
+│   └── understanding.py          # Constraint and intent tracking
+├── tests/
+│   ├── test_agent.py
+│   └── test_evaluator.py
+├── DATA_ATTRIBUTION.md
+└── README.md
+```
+
+## Setup and Installation
+
+### Prerequisites
+
+- Python 3.10 or later
+- A Python build whose bundled SQLite supports FTS5 (included in standard CPython builds)
+- Git
+- About 70 MB of free disk space for the catalog and evaluation output
+
+No `pip install`, environment variable, API key, or external service is required.
+
+### 1. Clone the repository
 
 ```bash
-gzip -dk catalog.jsonl.gz
-mv catalog.jsonl data/catalog.jsonl
+git clone https://github.com/shaohong126/techjam-Kopi-O-1-.git
+cd techjam-Kopi-O-1-
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
-
-## Run the Starter
-
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+Creating a virtual environment is optional because the project has no third-party dependencies:
 
 ```bash
-python3 -m evaluator.local_evaluator
+python -m venv .venv
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+Activate it with `source .venv/bin/activate` on macOS/Linux or `.venv\Scripts\Activate.ps1` in PowerShell.
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
+### 2. Verify the catalog
 
-## Agent Interface
+The frozen catalog is included at `data/catalog.jsonl`. Confirm that it contains 50,000 rows:
 
-```python
-class Agent:
-    def reset(self, session_id: str, user_profile: dict) -> None:
-        ...
-
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
-        return {
-            "message": "Do you have a material preference?",
-            "ask_attribute": "material",
-            "recommendations": [
-                {"parent_asin": "B000..."},
-                {"parent_asin": "B001..."}
-            ],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
-        }
+```bash
+python -c "from pathlib import Path; print(sum(1 for _ in Path('data/catalog.jsonl').open(encoding='utf-8')))"
 ```
 
-`ask_attribute` is one of `category`, `material`, `color`, `size`, `style`, `brand`, `budget`, `feature`, `use_case`, `other`, or `null`. See `docs/agent_api_contract.json`.
+## Run and Reproduce the Results
 
-## Technical Metrics
+All commands below should be run from the repository root.
 
-- **Hit Rate@10:** fraction of sessions that find the target within 10 turns.
-- **MRR:** mean reciprocal rank of the target; a miss contributes zero.
-- **MTTC:** mean first-hit turn; a miss is assigned turn 11.
-- **Reported token usage:** prompt and completion tokens returned by the team's model client.
+### 1. Run the test suite
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Expected result: all 11 tests pass. The tests cover buying/browsing routing, paraphrased constraints, budgets, intent overrides, boundary responses, semantic synonyms, recommendation limits, and evaluator behavior.
+
+### 2. Run the public evaluator
+
+```bash
+python -m evaluator.local_evaluator
+```
+
+The evaluator reads `data/catalog.jsonl` and `data/public_set.jsonl`, prints aggregate and scenario-level metrics, and writes per-session results to `results.json`.
+
+Optional custom paths:
+
+```bash
+python -m evaluator.local_evaluator \
+  --catalog data/catalog.jsonl \
+  --dataset data/public_set.jsonl \
+  --output results.json
+```
+
+### 3. Expected public-set results
+
+The current source was re-evaluated on all 200 public sessions with Python 3.12.5:
+
+| Metric | Weak BM25 baseline | Current agent |
+|---|---:|---:|
+| Hit Rate@10 | 0.125 | **1.000** |
+| MRR | 0.068034 | **1.000** |
+| MTTC ↓ | 9.81 | **2.02** |
+| Efficiency | 0.119 | **0.898** |
+| Technical score | 0.10671 | **0.9796** |
+
+Scenario breakdown:
+
+| Scenario | Sessions | Hit Rate@10 | MRR | MTTC ↓ |
+|---|---:|---:|---:|---:|
+| Buying | 80 | 1.000 | 1.000 | 1.500 |
+| Browsing | 80 | 1.000 | 1.000 | 1.825 |
+| Intent Override | 30 | 1.000 | 1.000 | 3.733 |
+| Boundary | 10 | 1.000 | 1.000 | 2.600 |
+
+The technical score is calculated as:
 
 ```text
 TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
 Efficiency = clip((11 - MTTC) / 10, 0, 1)
 ```
 
-Only exact `parent_asin` equality produces a hit. Core metrics are also reported by scenario.
+These figures are local development results on the released deterministic simulator. They do **not** guarantee equivalent performance on the organizer's private sessions or real customer conversations.
 
-## Model Choice and Cost
+## Agent Interface
 
-Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer may reimburse model costs through prizes instead of issuing API keys.
+The evaluator imports `Agent` from `starter/agent.py` and calls:
 
-## Files
+```python
+class Agent:
+    def reset(self, session_id: str, user_profile: dict) -> None:
+        ...
 
-```text
-data/public_set.jsonl             200 labeled development sessions
-docs/competition_specification.md participant rules and evaluation protocol
-docs/agent_api_contract.json      machine-readable Agent contract
-docs/evaluation_config.json       scoring configuration
-docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
-evaluator/local_evaluator.py      public-set simulator and scorer
+    def respond(
+        self,
+        session_id: str,
+        user_message: str,
+        turn: int,
+        top_k: int,
+    ) -> dict:
+        return {
+            "message": "What other requirement should I prioritize?",
+            "ask_attribute": "other",
+            "recommendations": [{"parent_asin": "B000..."}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
 ```
 
-## Judging and Submission Policy
+`ask_attribute` may be `category`, `material`, `color`, `size`, `style`, `brand`, `budget`, `feature`, `use_case`, `other`, or `null`. Only the first 10 valid unique `parent_asin` values are scored.
 
-- Participant submission requirements: `docs/submission_rules.md`
-- Participant release checklist: `docs/participant_release_checklist.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
+## Runtime, Network, and Cost Disclosure
 
-## Data Source
+- **Network access:** not required.
+- **Required environment variables:** none.
+- **Prompt/completion tokens:** 0.
+- **External API cost:** USD 0.
+- **Model inference:** none.
+- **Observed evaluation time:** approximately 19.3 seconds for all 200 public sessions, including catalog indexing, on the development machine. Runtime is hardware-dependent.
 
-The catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See `DATA_ATTRIBUTION.md` before using or redistributing the data.
-Sessions are sampled deterministically from the official Clothing 5-core leave-last-out split and joined to the frozen catalog.
+## Demo
 
+A public YouTube walkthrough will be added here and linked in the Devpost submission before the deadline.
+
+The demo will show:
+
+1. environment and catalog setup;
+2. an end-to-end multi-turn shopping session;
+3. budget, intent-override, and boundary behavior;
+4. the local evaluator command and final metrics.
+
+## Limitations and Future Improvements
+
+### Current limitations
+
+- The language understanding layer relies on English regular expressions, fixed vocabulary, and a small hand-built synonym map. Unseen phrasing, spelling mistakes, and multilingual messages may be misinterpreted.
+- The so-called semantic route uses token expansion and set-overlap similarity, not learned embeddings or a transformer model.
+- Ranking weights and dialogue behavior were evaluated on the public simulator, so the strong public score may partly reflect simulator-specific wording and catalog structure.
+- The entire 50,000-product FTS5 index is rebuilt in memory at startup. This is simple and fast at the current scale but will not scale efficiently to millions of frequently changing products.
+- The project currently provides an evaluator/API workflow rather than a consumer-facing interface, and it has not yet been validated through a real-user study.
+
+### Given more time, we would
+
+- create a held-out paraphrase and adversarial test set to measure generalization beyond the public simulator;
+- add typo-tolerant, multilingual constraint extraction and stronger preference-override handling;
+- compare offline embedding retrieval and learning-to-rank against the deterministic fallback;
+- persist the search index and benchmark startup time, per-turn latency, memory use, and catalog-update performance;
+- build a lightweight web interface and conduct user testing on question usefulness and recommendation quality.
+
+## Data Attribution
+
+This project uses **Amazon Reviews 2023**, published by McAuley Lab at UCSD, specifically the `Clothing_Shoes_and_Jewelry` category. The repository contains text and structured metadata only and does not include product images, videos, account credentials, raw review histories, or private organizer labels.
+
+Please review [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) before using or redistributing the data.
