@@ -86,15 +86,38 @@ produces the perfect MRR.
 We did not assume this. We tested "return more candidates" **three separate
 ways**, and every one of them scored worse:
 
-| Policy                        | HR@10 | MRR       | MTTC | Score      |
-| ----------------------------- | ----- | --------- | ---- | ---------- |
-| **One candidate (final)**     | 1.000 | **1.000** | 2.02 | **0.9796** |
-| Confidence-gated tail (≥0.99) | 1.000 | 0.9975    | 2.02 | 0.9789     |
-| Confidence-gated tail (≥0.95) | 1.000 | 0.9917    | 2.00 | 0.9775     |
-| All ten, every turn           | 1.000 | 0.7110    | 1.50 | 0.9033     |
+| Tail threshold        | MRR       | MTTC      | Efficiency | Score      |
+| --------------------- | --------- | --------- | ---------- | ---------- |
+| 0.00 (admit all ten)  | 0.7110    | **1.500** | **0.9500** | 0.9033     |
+| 0.10                  | 0.8421    | 1.735     | 0.9265     | 0.9379     |
+| 0.20                  | 0.8421    | 1.735     | 0.9265     | 0.9379     |
+| 0.30                  | 0.8421    | 1.735     | 0.9265     | 0.9379     |
+| 0.40                  | 0.8421    | 1.735     | 0.9265     | 0.9379     |
+| 0.50                  | 0.8677    | 1.765     | 0.9235     | 0.9450     |
+| 0.60                  | 0.9067    | 1.825     | 0.9175     | 0.9555     |
+| 0.70                  | 0.9283    | 1.865     | 0.9135     | 0.9612     |
+| 0.80                  | 0.9604    | 1.935     | 0.9065     | 0.9694     |
+| 0.90                  | 0.9842    | 1.985     | 0.9015     | 0.9756     |
+| 0.95                  | 0.9917    | 2.000     | 0.9000     | 0.9775     |
+| 0.98                  | 0.9950    | 2.010     | 0.8990     | 0.9783     |
+| 0.99                  | 0.9975    | 2.015     | 0.8985     | 0.9789     |
+| **1.01 (admit none)** | **1.000** | 2.020     | 0.8980     | **0.9796** |
 
-The last of these is the clearest: ten candidates cuts Mean Turns to Conversion
-from 2.02 to 1.50, but MRR collapses to 0.711 — a net loss of 0.076.
+Hit Rate@10 is **1.000 at every point on this curve** — verified across the full
+range. That is the crux: every additional candidate is pure rank dilution,
+because there are no missed targets left for it to recover. Loosening the gate
+buys exactly what it should (MTTC falls 2.020 → 1.500, efficiency rises 0.898 →
+0.950) and pays more than it earns at every single step.
+
+The plateau from 0.10 to 0.40 is informative rather than noise: no candidate's
+confidence ever falls in that band, so the gate admits an identical set
+throughout. The scoring function separates confident from unconfident candidates
+cleanly, with little mass in between — which is what makes a single-candidate
+probe viable in the first place.
+
+The endpoints bracket the trade: at 0.00 the agent returns all ten every turn,
+converting in 1.5 turns but scoring only 0.9033; at 1.01 it returns one, converts
+in 2.02 turns, and scores 0.9796. **A 0.52-turn speed-up costs 0.076 of score.**
 
 The reason turned out to be structural rather than a tuning failure. Emitting an
 extra candidate can only change the outcome two ways. Either it **is** the target
@@ -114,18 +137,18 @@ The tail-admission threshold is set to **1.01**. Because confidence is clamped t
 admitted before turn 10, so the agent always probes with a single, highest-
 confidence product. **We chose this because it maximises the technical score.**
 
-Lowering the threshold is a real and available trade, and it moves both metrics
-in the same direction:
+Lowering the threshold is a real and available trade — the eight-point sweep
+above maps it end to end. Both metrics move together as the gate loosens:
 
-- **Mean Turns to Conversion improves** (2.02 → 2.00 at 0.95). Extra candidates
-  mean the target is sometimes found a turn sooner.
-- **MRR degrades** (1.000 → 0.9917 at 0.95). Those earlier hits land at rank 2 or
-  below, and a rank-2 hit is worth 0.5 reciprocal rank instead of 1.0.
+- **Mean Turns to Conversion improves**, monotonically, 2.020 → 1.500. Extra
+  candidates mean the target is sometimes found a turn sooner.
+- **MRR degrades**, monotonically, 1.000 → 0.711. Those earlier hits land at
+  rank 2 or below, and a rank-2 hit is worth 0.5 reciprocal rank instead of 1.0.
 
 Under this competition's weighting — `0.30 × MRR` against `0.20 × Efficiency` —
-the reciprocal-rank loss always exceeds the efficiency gain, so the score falls
-monotonically as the threshold drops (0.9796 → 0.9789 → 0.9775). The optimum is
-to admit nothing.
+the reciprocal-rank loss exceeds the efficiency gain at every point on the curve,
+so the score falls monotonically from 0.9796 to 0.9033. There is no interior
+optimum to find: the best setting is the extreme one, and admitting nothing wins.
 
 We note this explicitly because the right setting is **objective-dependent, not
 universal**. A deployment that valued reaching an answer quickly over ranking it
