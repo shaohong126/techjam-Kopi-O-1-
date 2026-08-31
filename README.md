@@ -62,16 +62,16 @@ The dialogue policy estimates the information gain of material, color, size, sty
 
 ## Technology, APIs, and Data
 
-| Category | Used in this project |
-|---|---|
-| Language | Python 3.10+; verified with Python 3.12.5 |
-| Development tools | Python CLI, Git, and GitHub; the code is editor-agnostic |
-| External APIs | **None** |
-| Libraries/frameworks | Python standard library only: `sqlite3`/FTS5, `json`, `re`, `math`, `dataclasses`, `collections`, `pathlib`, and `unittest` |
-| LLMs / embedding models | None in the submitted agent |
-| Dataset | [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/), `Clothing_Shoes_and_Jewelry`, from McAuley Lab at UCSD |
-| Local evaluation data | 50,000 catalog products and 200 labeled development sessions |
-| Media assets | None; the solution uses only text and structured product metadata |
+| Category                | Used in this project                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Language                | Python 3.10+; verified with Python 3.12.5                                                                                   |
+| Development tools       | Python CLI, Git, and GitHub; the code is editor-agnostic                                                                    |
+| External APIs           | **None**                                                                                                                    |
+| Libraries/frameworks    | Python standard library only: `sqlite3`/FTS5, `json`, `re`, `math`, `dataclasses`, `collections`, `pathlib`, and `unittest` |
+| LLMs / embedding models | None in the submitted agent                                                                                                 |
+| Dataset                 | [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/), `Clothing_Shoes_and_Jewelry`, from McAuley Lab at UCSD       |
+| Local evaluation data   | 50,000 catalog products and 200 labeled development sessions                                                                |
+| Media assets            | None; the solution uses only text and structured product metadata                                                           |
 
 The 200 public sessions comprise 80 Buying, 80 Browsing, 30 Intent Override, and 10 Boundary sessions. The organizer retains an additional 800 sessions for private evaluation. Raw user IDs, review text, timestamps, and purchase histories are not included in this repository. See [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) and [data/README.md](data/README.md) for provenance and permitted use.
 
@@ -171,22 +171,22 @@ python -m evaluator.local_evaluator \
 
 The current source was re-evaluated on all 200 public sessions with Python 3.12.5:
 
-| Metric | Weak BM25 baseline | Current agent |
-|---|---:|---:|
-| Hit Rate@10 | 0.125 | **1.000** |
-| MRR | 0.068034 | **1.000** |
-| MTTC ↓ | 9.81 | **2.02** |
-| Efficiency | 0.119 | **0.898** |
-| Technical score | 0.10671 | **0.9796** |
+| Metric          | Weak BM25 baseline | Current agent |
+| --------------- | -----------------: | ------------: |
+| Hit Rate@10     |              0.125 |     **1.000** |
+| MRR             |           0.068034 |     **1.000** |
+| MTTC ↓          |               9.81 |      **2.02** |
+| Efficiency      |              0.119 |     **0.898** |
+| Technical score |            0.10671 |    **0.9796** |
 
 Scenario breakdown:
 
-| Scenario | Sessions | Hit Rate@10 | MRR | MTTC ↓ |
-|---|---:|---:|---:|---:|
-| Buying | 80 | 1.000 | 1.000 | 1.500 |
-| Browsing | 80 | 1.000 | 1.000 | 1.825 |
-| Intent Override | 30 | 1.000 | 1.000 | 3.733 |
-| Boundary | 10 | 1.000 | 1.000 | 2.600 |
+| Scenario        | Sessions | Hit Rate@10 |   MRR | MTTC ↓ |
+| --------------- | -------: | ----------: | ----: | -----: |
+| Buying          |       80 |       1.000 | 1.000 |  1.500 |
+| Browsing        |       80 |       1.000 | 1.000 |  1.825 |
+| Intent Override |       30 |       1.000 | 1.000 |  3.733 |
+| Boundary        |       10 |       1.000 | 1.000 |  2.600 |
 
 The technical score is calculated as:
 
@@ -242,6 +242,60 @@ The demo will show:
 2. an end-to-end multi-turn shopping session;
 3. budget, intent-override, and boundary behavior;
 4. the local evaluator command and final metrics.
+
+## Design Decisions and Experiments
+
+The highest-impact decision in the agent is **how many products to return per
+turn**, and it is the one we tested most carefully.
+
+The interface permits up to 10 ids, but scoring uses reciprocal rank. Returning
+one high-confidence candidate scores `RR = 1.0` when correct; returning ten with
+the target at position four scores 0.25. We therefore return **one** candidate on
+turns 1–9, falling back to all ten on turn 10 as a last-chance safety net.
+Previously shown ids are excluded, so a wrong guess costs exactly one turn and
+the next-best candidate is offered instead.
+
+We did not assume this was right. The agent computes a calibrated confidence for
+every candidate, and `tail_confidence_threshold` controls how much of the ranked
+tail is revealed alongside the top pick. Sweeping it end to end:
+
+| Tail threshold        | MRR       | MTTC      | Efficiency | Score      |
+| --------------------- | --------- | --------- | ---------- | ---------- |
+| 0.00 (admit all ten)  | 0.7110    | **1.500** | **0.9500** | 0.9033     |
+| 0.10 – 0.40           | 0.8421    | 1.735     | 0.9265     | 0.9379     |
+| 0.50                  | 0.8677    | 1.765     | 0.9235     | 0.9450     |
+| 0.60                  | 0.9067    | 1.825     | 0.9175     | 0.9555     |
+| 0.70                  | 0.9283    | 1.865     | 0.9135     | 0.9612     |
+| 0.80                  | 0.9604    | 1.935     | 0.9065     | 0.9694     |
+| 0.90                  | 0.9842    | 1.985     | 0.9015     | 0.9756     |
+| 0.95                  | 0.9917    | 2.000     | 0.9000     | 0.9775     |
+| 0.98                  | 0.9950    | 2.010     | 0.8990     | 0.9783     |
+| 0.99                  | 0.9975    | 2.015     | 0.8985     | 0.9789     |
+| **1.01 (admit none)** | **1.000** | 2.020     | 0.8980     | **0.9796** |
+
+Hit Rate@10 is **1.000 at every point on this curve**. That is the crux: with no
+missed targets left to recover, every additional candidate is pure rank dilution.
+Loosening the gate buys exactly what it should — MTTC falls 2.020 → 1.500,
+efficiency rises 0.898 → 0.950 — and pays more than it earns at every step. A
+0.52-turn speed-up costs 0.076 of technical score.
+
+The reason is structural rather than a tuning failure. An extra candidate can
+only change the outcome two ways: either it **is** the target, converting a turn
+earlier but at rank ≥2 (gaining `0.20 × 0.1` in efficiency, losing `0.30 × 0.5`
+in reciprocal rank), or it **isn't**, in which case it is consumed and cannot be
+offered later. No branch favours hedging.
+
+We ship `tail_confidence_threshold = 1.01`, deliberately unreachable because
+confidence is clamped to `[0, 1]`. **This maximises the technical score under the
+competition's weighting, but it is not universally correct.** A deployment that
+valued reaching an answer quickly, or that showed shoppers a shortlist rather
+than one suggestion, would lower it on purpose and accept the ranking cost. The
+parameter is exposed rather than hard-coded so that choice remains open.
+
+One incidental finding: thresholds from 0.10 to 0.40 produce byte-identical
+results, because no candidate's confidence ever falls in that band. The scoring
+function separates confident from unconfident candidates cleanly with little mass
+in between — which is what makes a single-candidate probe viable at all.
 
 ## Limitations and Future Improvements
 
