@@ -338,4 +338,5 @@ Please review [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) before using or redistr
 
 ## Team Member Contributions
 Team Member: Cayla Cheok Kang Ling, Chew Shao Hong, Keh Jing Xiang, Liew Shan Xuan, Wong Ying Jia
+
 All team members contributed collaboratively throughout the project, including solution design, implementation, testing, evaluation, and documentation. As the work was completed jointly through continuous discussion and iteration, individual contributions were not divided into strictly separate components.
