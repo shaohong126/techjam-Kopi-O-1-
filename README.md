@@ -17,7 +17,7 @@ Our solution addresses this problem with a deterministic hybrid retrieval pipeli
 - **Hybrid candidate retrieval** combines exact constraint matching, SQLite FTS5/BM25 search, lightweight synonym expansion, category routing, and budget filtering.
 - **Multi-signal reranking** uses constraint coverage, sequence alignment, lexical and semantic overlap, price proximity, profile affinity, product quality, popularity, and recency.
 - **Adaptive clarification** uses candidate attribute coverage and entropy to choose useful follow-up questions without repeatedly asking about declined preferences.
-- **Turn-efficient recommendations** avoid previously shown products and return a focused recommendation before the final turn.
+- **Precision-first recommendation policy** avoids previously shown products and uses a deliberate confidence threshold to return one focused recommendation on turns 1–9, followed by a Top-10 safety net on turn 10.
 
 The final agent runs fully offline with no external API, model download, credential, or network access.
 
@@ -59,6 +59,21 @@ Buying sessions emphasize hard-constraint coverage, exact matches, budget proxim
 ### 4. Clarification policy
 
 The dialogue policy estimates the information gain of material, color, size, style, brand, budget, use case, and feature attributes from the current candidate pool. It asks a broad question early, then selects a specific high-value attribute when that is more informative.
+
+### 5. Confidence threshold and Top-1 policy
+
+The current version adds query-local confidence scoring and sets `tail_confidence_threshold = 1.01`. Candidate confidence is clamped to `[0, 1]`, so 1.01 is intentionally unreachable: on turns 1–9, the agent returns only the rank-1 product; on turn 10, it bypasses the threshold and returns up to `top_k` products as a final recall safeguard.
+
+This is the main behavioral difference from the earlier confidence-gated version, whose threshold was 0.95 and could admit additional high-confidence products. On the 200-session public development set, strict Top-1 preserved Hit Rate@10 while improving MRR and the weighted technical score:
+
+| Recommendation policy | Hit Rate@10 | MRR | MTTC ↓ | Technical score |
+|---|---:|---:|---:|---:|
+| **Strict Top-1 (`threshold = 1.01`)** | **1.000** | **1.0000** | 2.02 | **0.9796** |
+| Confidence tail at ≥0.99 | 1.000 | 0.9975 | 2.02 | 0.9789 |
+| Confidence tail at ≥0.95 | 1.000 | 0.9917 | **2.00** | 0.9775 |
+| Up to 10 products every turn | 1.000 | 0.7110 | **1.50** | 0.9033 |
+
+The value 1.01 does **not** mean 101% confidence. It is an objective-specific switch that disables the recommendation tail before the final turn because this competition rewards reciprocal rank more strongly than the small efficiency gain from lower-ranked early hits. A consumer-facing shopping product would likely lower the threshold and show a shortlist instead.
 
 ## Technology, APIs, and Data
 
@@ -148,7 +163,7 @@ All commands below should be run from the repository root.
 python -m unittest discover -s tests -v
 ```
 
-Expected result: all 11 tests pass. The tests cover buying/browsing routing, paraphrased constraints, budgets, intent overrides, boundary responses, semantic synonyms, recommendation limits, and evaluator behavior.
+Expected result: all 13 tests pass. The tests cover buying/browsing routing, paraphrased constraints, budgets, intent overrides, boundary responses, semantic synonyms, confidence-threshold behavior, recommendation limits, and evaluator behavior.
 
 ### 2. Run the public evaluator
 
