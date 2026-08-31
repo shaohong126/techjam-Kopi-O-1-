@@ -335,3 +335,7 @@ in between — which is what makes a single-candidate probe viable at all.
 This project uses **Amazon Reviews 2023**, published by McAuley Lab at UCSD, specifically the `Clothing_Shoes_and_Jewelry` category. The repository contains text and structured metadata only and does not include product images, videos, account credentials, raw review histories, or private organizer labels.
 
 Please review [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) before using or redistributing the data.
+
+## Team Member Contributions
+Team Member: Cayla Cheok Kang Ling, Chew Shao Hong, Keh Jing Xiang, Liew Shan Xuan, Wong Ying Jia
+All team members contributed collaboratively throughout the project, including solution design, implementation, testing, evaluation, and documentation. As the work was completed jointly through continuous discussion and iteration, individual contributions were not divided into strictly separate components.
