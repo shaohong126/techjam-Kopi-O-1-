@@ -12,7 +12,7 @@ from starter.understanding import ConversationStateTracker
 class Agent:
     """Official shopping-agent interface and turn orchestrator."""
 
-    tail_confidence_threshold = 0.95
+    tail_confidence_threshold = 1.01
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
