@@ -1,6 +1,6 @@
 # Conversational E-Commerce Search Agent
 
-**Team Kopi-O · Techjam Track 4 Shopping Copilot: AI Conversational Search and Recommendations**
+**Team Kopi O(1) · Techjam Track 4 Shopping Copilot: AI Conversational Search and Recommendations**
 
 An offline, stateful shopping agent that turns vague multi-turn conversations into ranked product recommendations. The agent asks targeted clarification questions, remembers and updates customer constraints, and tries to identify the hidden target product within 10 turns.
 
