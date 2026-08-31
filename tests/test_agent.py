@@ -7,6 +7,7 @@ from pathlib import Path
 
 from starter.agent import Agent
 from starter.models import BudgetOperator, IntentMode
+from starter.ranking import RankedCandidate
 
 
 CATALOG = [
@@ -92,7 +93,8 @@ class AgentBehaviorTest(unittest.TestCase):
             1,
             10,
         )
-        self.assertEqual(response["recommendations"][0], {"parent_asin": "RUN"})
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUN")
+        self.assertGreaterEqual(response["recommendations"][0]["score"], 0.0)
         self.assertIn("waterproof", self.agent._sessions["paraphrase"].active_keys())
 
     def test_budget_constraints_change_the_recommendation(self) -> None:
@@ -100,7 +102,7 @@ class AgentBehaviorTest(unittest.TestCase):
         cheap = self.agent.respond(
             "cheap", "I'm looking for Shoes. A key requirement is: under $50.", 1, 10
         )
-        self.assertEqual(cheap["recommendations"], [{"parent_asin": "RUN"}])
+        self.assertEqual(cheap["recommendations"][0]["parent_asin"], "RUN")
         self.assertEqual(
             self.agent._sessions["cheap"].budget.operator,
             BudgetOperator.MAXIMUM,
@@ -110,7 +112,7 @@ class AgentBehaviorTest(unittest.TestCase):
         premium = self.agent.respond(
             "premium", "I'm looking for Shoes. A key requirement is: at least $150.", 1, 10
         )
-        self.assertEqual(premium["recommendations"], [{"parent_asin": "FORMAL"}])
+        self.assertEqual(premium["recommendations"][0]["parent_asin"], "FORMAL")
         self.assertEqual(
             self.agent._sessions["premium"].budget.operator,
             BudgetOperator.MINIMUM,
@@ -130,7 +132,7 @@ class AgentBehaviorTest(unittest.TestCase):
         state = self.agent._sessions["override"]
         self.assertNotIn("cotton", state.active_keys())
         self.assertIn("leather", state.active_keys())
-        self.assertEqual(response["recommendations"][0], {"parent_asin": "FORMAL"})
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "FORMAL")
 
     def test_confirmed_fact_survives_unrelated_override(self) -> None:
         self.reset("provenance")
@@ -172,14 +174,58 @@ class AgentBehaviorTest(unittest.TestCase):
             1,
             10,
         )
-        self.assertEqual(response["recommendations"][0], {"parent_asin": "RUN"})
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "RUN")
 
-    def test_returns_top_k_recommendations_before_final_turn(self) -> None:
+    def test_low_confidence_still_returns_only_top1(self) -> None:
         self.reset("limit")
         response = self.agent.respond(
             "limit", "I'm looking for Shoes, but I'm still exploring.", 1, 10
         )
+        self.assertEqual(len(response["recommendations"]), 1)
+        self.assertEqual(response["recommendations"][0]["score"], 0.0)
+
+    def test_final_turn_returns_top_k_regardless_of_confidence(self) -> None:
+        self.reset("final")
+        response = self.agent.respond(
+            "final", "I'm looking for Shoes, but I'm still exploring.", 10, 10
+        )
         self.assertEqual(len(response["recommendations"]), len(CATALOG))
+        self.assertTrue(all("score" in item for item in response["recommendations"]))
+        scores = [item["score"] for item in response["recommendations"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_high_confidence_tail_controls_variable_k(self) -> None:
+        agent = Agent(self.catalog_path)
+        agent.reset("variable", {
+            "preference_tags": ["comfort"],
+            "summary": "Prior purchases emphasize comfort.",
+            "rating_style": "usually positive",
+        })
+        candidates = [
+            RankedCandidate(
+                parent_asin=asin,
+                score=float(3 - index),
+                exact_coverage=1.0,
+                sequence_alignment=1.0,
+                lexical_coverage=1.0,
+                hard_slot_coverage=1.0,
+                budget_match=0.0,
+            )
+            for index, asin in enumerate(("RUN", "FORMAL", "WALK"))
+        ]
+        agent.ranker.rank = lambda retrieval, state: candidates
+        agent.ranker.with_confidence = lambda ranked, state, limit: [
+            (candidates[0], 0.99),
+            (candidates[1], 0.96),
+            (candidates[2], 0.94),
+        ]
+        response = agent.respond(
+            "variable", "I'm looking for Shoes. A key requirement is: leather.", 1, 10
+        )
+        self.assertEqual(
+            [item["parent_asin"] for item in response["recommendations"]],
+            ["RUN", "FORMAL"],
+        )
 
 
 if __name__ == "__main__":

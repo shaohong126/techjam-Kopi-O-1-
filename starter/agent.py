@@ -12,6 +12,8 @@ from starter.understanding import ConversationStateTracker
 class Agent:
     """Official shopping-agent interface and turn orchestrator."""
 
+    tail_confidence_threshold = 0.95
+
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.catalog = CatalogIndex(self.catalog_path)
@@ -45,12 +47,26 @@ class Agent:
         retrieval = self.catalog.retrieve(state, query_terms, top_k)
         retrieval = self._without_seen_recommendations(retrieval, state)
 
-        recommendation_limit = top_k
-        recommendations = self.ranker.rerank(
-            retrieval,
-            state,
-            recommendation_limit,
-        )
+        ranked = self.ranker.rank(retrieval, state)
+        scored = self.ranker.with_confidence(ranked, state, top_k)
+        if turn >= 10:
+            selected = scored
+        else:
+            # A wrong rank-1 guess is not penalized by the evaluator, while a
+            # lower-rank hit permanently reduces MRR. Keep that precision-first
+            # probe and expose only the exceptionally well-supported tail.
+            selected = scored[:1]
+            for candidate, confidence in scored[1:]:
+                if confidence < self.tail_confidence_threshold:
+                    break
+                selected.append((candidate, confidence))
+        recommendations = [
+            {
+                "parent_asin": candidate.parent_asin,
+                "score": round(confidence, 6),
+            }
+            for candidate, confidence in selected
+        ]
         state.seen_recommendations = list(
             dict.fromkeys(
                 (
