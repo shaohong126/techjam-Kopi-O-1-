@@ -85,7 +85,7 @@ The value 1.01 does **not** mean 101% confidence. It is an objective-specific sw
 | Libraries/frameworks    | Python standard library only: `sqlite3`/FTS5, `json`, `re`, `math`, `dataclasses`, `collections`, `pathlib`, and `unittest` |
 | LLMs / embedding models | None in the submitted agent                                                                                                 |
 | Dataset                 | [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/), `Clothing_Shoes_and_Jewelry`, from McAuley Lab at UCSD       |
-| Local evaluation data   | 50,000 catalog products and 200 labeled development sessions                                                                |
+| Local evaluation data   | Organizer-provided catalog of 50,000 products and 200 labeled development sessions                                           |
 | Media assets            | None; the solution uses only text and structured product metadata                                                           |
 
 The 200 public sessions comprise 80 Buying, 80 Browsing, 30 Intent Override, and 10 Boundary sessions. The organizer retains an additional 800 sessions for private evaluation. Raw user IDs, review text, timestamps, and purchase histories are not included in this repository. See [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md) and [data/README.md](data/README.md) for provenance and permitted use.
@@ -96,7 +96,7 @@ The 200 public sessions comprise 80 Buying, 80 Browsing, 30 Intent Override, and
 .
 ├── data/
 │   ├── public_set.jsonl          # 200 labeled development sessions
-│   └── catalog.jsonl             # Frozen catalog of 50,000 products
+│   └── catalog.jsonl             # Organizer-provided catalog; download separately
 ├── docs/
 │   ├── agent_api_contract.json   # Machine-readable response contract
 │   ├── baseline_results.json     # Weak BM25 baseline
@@ -145,9 +145,15 @@ python -m venv .venv
 
 Activate it with `source .venv/bin/activate` on macOS/Linux or `.venv\Scripts\Activate.ps1` in PowerShell.
 
-### 2. Verify the catalog
+### 2. Download and verify the catalog
 
-The frozen catalog is included at `data/catalog.jsonl`. Confirm that it contains 50,000 rows:
+Download `catalog.jsonl.gz` and the published checksum file from the organizer's [official TechJam Participant Kit Release](https://github.com/TechJam2026/techjam-conversational-search/releases/tag/participant-kit). Verify the archive using the organizer-provided SHA-256 checksum, then decompress it and place the resulting file at:
+
+```text
+data/catalog.jsonl
+```
+
+The catalog is intentionally not tracked in this team repository. Confirm that the extracted file contains 50,000 rows:
 
 ```bash
 python -c "from pathlib import Path; print(sum(1 for _ in Path('data/catalog.jsonl').open(encoding='utf-8')))"
