@@ -249,14 +249,9 @@ class Agent:
 
 ## Demo
 
-A public YouTube walkthrough will be added here and linked in the Devpost submission before the deadline.
+[Watch the project demo on YouTube](https://youtu.be/riUw9NpLfrU).
 
-The demo will show:
-
-1. environment and catalog setup;
-2. an end-to-end multi-turn shopping session;
-3. budget, intent-override, and boundary behavior;
-4. the local evaluator command and final metrics.
+The video provides a short walkthrough of Kopi-O and its conversational shopping experience.
 
 ## Design Decisions and Experiments
 
